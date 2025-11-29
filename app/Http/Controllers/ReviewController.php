@@ -2,47 +2,70 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Review;
 use Illuminate\Http\Request;
 
-class ReviewController
+class ReviewController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
+        return Review::with('transfer')->where('user_id', auth()->id())->get();
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
-        //
+        $data = $request->validate([
+            'transfer_id' => 'required|exists:transfers,id',
+            'rating'      => 'required|integer|min:1|max:5',
+            'comment'     => 'nullable|string',
+        ]);
+
+        $review = Review::updateOrCreate(
+            [
+                'user_id'     => auth()->id(),
+                'transfer_id' => $data['transfer_id'],
+            ],
+            [
+                'rating'  => $data['rating'],
+                'comment' => $data['comment'] ?? null,
+            ]
+        );
+
+        return response()->json($review, 201);
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
+    public function show(Review $review)
     {
-        //
+        $this->authorizeOwner($review->user_id);
+        return $review;
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
+    public function update(Request $request, Review $review)
     {
-        //
+        $this->authorizeOwner($review->user_id);
+
+        $data = $request->validate([
+            'rating'  => 'sometimes|required|integer|min:1|max:5',
+            'comment' => 'nullable|string',
+        ]);
+
+        $review->update($data);
+
+        return response()->json($review);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
+    public function destroy(Review $review)
     {
-        //
+        $this->authorizeOwner($review->user_id);
+        $review->delete();
+
+        return response()->json(null, 204);
+    }
+
+    protected function authorizeOwner($userId)
+    {
+        if ($userId !== auth()->id() && auth()->user()->role !== 'admin') {
+            abort(403, 'Forbidden');
+        }
     }
 }
