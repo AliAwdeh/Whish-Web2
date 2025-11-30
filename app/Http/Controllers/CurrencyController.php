@@ -14,10 +14,14 @@ class CurrencyController extends Controller
 
     public function store(Request $request)
     {
-        // TODO: admin-only
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
         $data = $request->validate([
-            'code'      => 'required|string|size:3|unique:currencies,code',
-            'name'      => 'required|string|max:100',
+            'code' => 'required|string|size:3|unique:currencies,code',
+            'name' => 'required|string|max:100',
             'is_active' => 'boolean',
         ]);
 
@@ -33,9 +37,13 @@ class CurrencyController extends Controller
 
     public function update(Request $request, Currency $currency)
     {
-        // TODO: admin-only
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
         $data = $request->validate([
-            'name'      => 'sometimes|required|string|max:100',
+            'name' => 'sometimes|required|string|max:100',
             'is_active' => 'sometimes|boolean',
         ]);
 
@@ -46,8 +54,13 @@ class CurrencyController extends Controller
 
     public function destroy(Currency $currency)
     {
-        // TODO: admin-only
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
         $currency->delete();
+
         return response()->json(null, 204);
     }
 }
