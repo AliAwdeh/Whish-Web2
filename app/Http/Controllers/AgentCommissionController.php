@@ -2,47 +2,94 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AgentCommission;
 use Illuminate\Http\Request;
 
-class AgentCommissionController
+class AgentCommissionController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
+        $user = auth()->user();
+
+        if ($user->role === 'admin') {
+            return AgentCommission::with(['agent', 'transfer'])->paginate(20);
+        }
+
+        if ($user->role === 'agent') {
+            $agentId = optional($user->agent)->id;
+
+            if (!$agentId) {
+                return response()->json([
+                    'data' => [],
+                    'message' => 'No agent profile linked to this user.'
+                ]);
+            }
+
+            return AgentCommission::with('transfer')
+                ->where('agent_id', $agentId)
+                ->paginate(20);
+        }
+
+        abort(403, 'Forbidden');
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
-        //
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
+        $data = $request->validate([
+            'agent_id' => 'required|exists:agents,id',
+            'transfer_id' => 'required|exists:transfers,id',
+            'amount' => 'required|numeric|min:0',
+        ]);
+
+        $commission = AgentCommission::create($data);
+
+        return response()->json($commission, 201);
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
+    public function show(AgentCommission $agentCommission)
     {
-        //
+        $user = auth()->user();
+
+        if (
+            $user->role === 'admin' ||
+            ($user->role === 'agent' && $agentCommission->agent_id === optional($user->agent)->id)
+        ) {
+            return $agentCommission->load(['agent', 'transfer']);
+        }
+
+        abort(403, 'Forbidden');
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
+    public function update(Request $request, AgentCommission $agentCommission)
     {
-        //
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
+        $data = $request->validate([
+            'amount' => 'sometimes|required|numeric|min:0',
+        ]);
+
+        $agentCommission->update($data);
+
+        return response()->json($agentCommission);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
+    public function destroy(AgentCommission $agentCommission)
     {
-        //
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
+        $agentCommission->delete();
+
+        return response()->json(null, 204);
     }
 }
