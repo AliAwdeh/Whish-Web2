@@ -2,47 +2,55 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ExchangeRate;
 use Illuminate\Http\Request;
 
-class ExchangeRateController
+class ExchangeRateController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
+        return ExchangeRate::with(['fromCurrency', 'toCurrency'])->get();
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
-        //
+        // TODO: admin-only
+        $data = $request->validate([
+            'from_currency_id' => 'required|exists:currencies,id',
+            'to_currency_id'   => 'required|exists:currencies,id',
+            'rate'             => 'required|numeric',
+            'valid_from'       => 'nullable|date',
+            'valid_to'         => 'nullable|date|after:valid_from',
+        ]);
+
+        $rate = ExchangeRate::create($data);
+
+        return response()->json($rate, 201);
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
+    public function show(ExchangeRate $exchangeRate)
     {
-        //
+        return $exchangeRate->load(['fromCurrency', 'toCurrency']);
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
+    public function update(Request $request, ExchangeRate $exchangeRate)
     {
-        //
+        // TODO: admin-only
+        $data = $request->validate([
+            'rate'       => 'sometimes|required|numeric',
+            'valid_from' => 'nullable|date',
+            'valid_to'   => 'nullable|date|after:valid_from',
+        ]);
+
+        $exchangeRate->update($data);
+
+        return response()->json($exchangeRate);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
+    public function destroy(ExchangeRate $exchangeRate)
     {
-        //
+        // TODO: admin-only
+        $exchangeRate->delete();
+        return response()->json(null, 204);
     }
 }

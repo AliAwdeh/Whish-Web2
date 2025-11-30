@@ -2,47 +2,52 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Currency;
 use Illuminate\Http\Request;
 
-class CurrencyController
+class CurrencyController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
+        return Currency::all();
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
-        //
+        // TODO: admin-only
+        $data = $request->validate([
+            'code'      => 'required|string|size:3|unique:currencies,code',
+            'name'      => 'required|string|max:100',
+            'is_active' => 'boolean',
+        ]);
+
+        $currency = Currency::create($data);
+
+        return response()->json($currency, 201);
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(string $id)
+    public function show(Currency $currency)
     {
-        //
+        return $currency;
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, string $id)
+    public function update(Request $request, Currency $currency)
     {
-        //
+        // TODO: admin-only
+        $data = $request->validate([
+            'name'      => 'sometimes|required|string|max:100',
+            'is_active' => 'sometimes|boolean',
+        ]);
+
+        $currency->update($data);
+
+        return response()->json($currency);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(string $id)
+    public function destroy(Currency $currency)
     {
-        //
+        // TODO: admin-only
+        $currency->delete();
+        return response()->json(null, 204);
     }
 }
