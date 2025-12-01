@@ -14,15 +14,19 @@ class OfferController extends Controller
 
     public function store(Request $request)
     {
-        // TODO: admin-only
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
         $data = $request->validate([
-            'title'            => 'required|string|max:255',
-            'description'      => 'nullable|string',
+            'title' => 'required|string|max:255',
+            'description' => 'nullable|string',
             'discount_percent' => 'nullable|numeric|min:0',
-            'starts_at'        => 'nullable|date',
-            'ends_at'          => 'nullable|date|after:starts_at',
-            'is_active'        => 'boolean',
-            'conditions'       => 'nullable|array',
+            'starts_at' => 'nullable|date',
+            'ends_at' => 'nullable|date|after:starts_at',
+            'is_active' => 'boolean',
+            'conditions' => 'nullable|array',
         ]);
 
         if (isset($data['conditions'])) {
@@ -41,15 +45,19 @@ class OfferController extends Controller
 
     public function update(Request $request, Offer $offer)
     {
-        // TODO: admin-only
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
         $data = $request->validate([
-            'title'            => 'sometimes|required|string|max:255',
-            'description'      => 'nullable|string',
+            'title' => 'sometimes|required|string|max:255',
+            'description' => 'nullable|string',
             'discount_percent' => 'nullable|numeric|min:0',
-            'starts_at'        => 'nullable|date',
-            'ends_at'          => 'nullable|date|after:starts_at',
-            'is_active'        => 'sometimes|boolean',
-            'conditions'       => 'nullable|array',
+            'starts_at' => 'nullable|date',
+            'ends_at' => 'nullable|date|after:starts_at',
+            'is_active' => 'sometimes|boolean',
+            'conditions' => 'nullable|array',
         ]);
 
         if (isset($data['conditions'])) {
@@ -63,7 +71,11 @@ class OfferController extends Controller
 
     public function destroy(Offer $offer)
     {
-        // TODO: admin-only
+        $user = auth()->user();
+        if ($user->role !== 'admin') {
+            abort(403, 'Admin only');
+        }
+
         $offer->delete();
 
         return response()->json(null, 204);
