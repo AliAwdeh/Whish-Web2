@@ -10,19 +10,16 @@ class BeneficiaryController extends Controller
     public function index()
     {
         $user = auth()->user();
- 
-        if ($user->role === 'admin') {
-            return Beneficiary::paginate(20);
-        }
- 
-        return Beneficiary::where('user_id', $user->id)->get();
+
+        return Beneficiary::paginate(20);
     }
  
     public function store(Request $request)
     {
         $user = auth()->user();
- 
+
         $data = $request->validate([
+            'recipient_user_id' => 'nullable|exists:users,id',
             'full_name' => 'required|string|max:255',
             'country' => 'required|string|max:100',
             'city' => 'nullable|string|max:100',
@@ -32,6 +29,7 @@ class BeneficiaryController extends Controller
  
         $beneficiary = Beneficiary::create([
             'user_id' => $user->id,
+            'recipient_user_id' => $data['recipient_user_id'] ?? null,
             'full_name' => $data['full_name'],
             'country' => $data['country'],
             'city' => $data['city'] ?? null,
@@ -52,8 +50,9 @@ class BeneficiaryController extends Controller
     public function update(Request $request, Beneficiary $beneficiary)
     {
         $this->authorizeOwner($beneficiary->user_id);
- 
+
         $data = $request->validate([
+            'recipient_user_id' => 'sometimes|nullable|exists:users,id',
             'full_name' => 'sometimes|required|string|max:255',
             'country' => 'sometimes|required|string|max:100',
             'city' => 'nullable|string|max:100',

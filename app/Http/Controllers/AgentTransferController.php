@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Transfer;
 use App\Models\AgentCommission;
+use App\Models\Notification;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class AgentTransferController extends Controller
 {
@@ -91,6 +93,43 @@ class AgentTransferController extends Controller
             ]
         );
 
+        $this->notifyTransferCompleted($transfer);
+
         return response()->json($transfer->load(['beneficiary', 'user', 'agent']));
+    }
+
+    protected function notifyTransferCompleted(Transfer $transfer): void
+    {
+        $transfer->loadMissing([
+            'beneficiary',
+            'user',
+        ]);
+
+        $reference = $transfer->reference_code ?? $transfer->id;
+        $notificationData = [
+            'transfer_id' => $transfer->id,
+            'beneficiary_id' => $transfer->beneficiary_id,
+            'status' => $transfer->status,
+            'reference_code' => $reference,
+        ];
+
+        Notification::create([
+            'id' => (string) Str::uuid(),
+            'user_id' => $transfer->user_id,
+            'type' => 'transfer_completed_sender',
+            'message' => 'Your transfer ' . $reference . ' has been completed.',
+            'data' => $notificationData,
+        ]);
+
+        $recipientUserId = optional($transfer->beneficiary)->recipient_user_id;
+        if ($recipientUserId) {
+            Notification::create([
+                'id' => (string) Str::uuid(),
+                'user_id' => $recipientUserId,
+                'type' => 'transfer_completed_recipient',
+                'message' => 'You received transfer ' . $reference . '.',
+                'data' => $notificationData,
+            ]);
+        }
     }
 }

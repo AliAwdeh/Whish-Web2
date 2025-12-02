@@ -10,7 +10,11 @@ class PaymentMethodController extends Controller
     public function index()
     {
         $user = auth()->user();
- 
+
+        if ($user->role === 'admin') {
+            return PaymentMethod::paginate(20);
+        }
+
         return PaymentMethod::where('user_id', $user->id)->get();
     }
  

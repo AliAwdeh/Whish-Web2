@@ -64,11 +64,11 @@ class TransferController extends Controller
             'metadata' => 'nullable|array',
         ]);
 
-        $beneficiaryBelongsToUser = Beneficiary::where('id', $data['beneficiary_id'])
+        $beneficiary = Beneficiary::where('id', $data['beneficiary_id'])
             ->where('user_id', $user->id)
-            ->exists();
+            ->first();
 
-        if (! $beneficiaryBelongsToUser) {
+        if (! $beneficiary) {
             return response()->json(['message' => 'Invalid beneficiary for this user'], 403);
         }
 
@@ -98,9 +98,24 @@ class TransferController extends Controller
             'message' => 'Your transfer ' . $transfer->reference_code . ' was created and is pending.',
             'data' => [
                 'transfer_id' => $transfer->id,
+                'beneficiary_id' => $transfer->beneficiary_id,
                 'status' => $transfer->status,
             ],
         ]);
+
+        if ($beneficiary->recipient_user_id) {
+            Notification::create([
+                'id' => (string) Str::uuid(),
+                'user_id' => $beneficiary->recipient_user_id,
+                'type' => 'transfer_created_recipient',
+                'message' => 'You have an incoming transfer ' . $transfer->reference_code . '.',
+                'data' => [
+                    'transfer_id' => $transfer->id,
+                    'beneficiary_id' => $transfer->beneficiary_id,
+                    'status' => $transfer->status,
+                ],
+            ]);
+        }
 
         if ($transfer->agent_id && $transfer->agent && $transfer->agent->user_id) {
             Notification::create([
@@ -110,6 +125,7 @@ class TransferController extends Controller
                 'message' => 'New transfer assigned to your agency: ' . $transfer->reference_code,
                 'data' => [
                     'transfer_id' => $transfer->id,
+                    'beneficiary_id' => $transfer->beneficiary_id,
                     'status' => $transfer->status,
                 ],
             ]);
@@ -137,7 +153,12 @@ class TransferController extends Controller
             'status' => 'sometimes|required|in:pending,processing,completed,cancelled,refunded,disputed',
         ]);
 
+        $previousStatus = $transfer->status;
         $transfer->update($data);
+
+        if (($data['status'] ?? null) === 'completed' && $previousStatus !== 'completed') {
+            $this->notifyTransferCompleted($transfer);
+        }
 
         return response()->json($transfer);
     }
@@ -236,5 +257,40 @@ class TransferController extends Controller
         }
 
         abort(403, 'Forbidden');
+    }
+
+    protected function notifyTransferCompleted(Transfer $transfer): void
+    {
+        $transfer->loadMissing([
+            'beneficiary',
+            'user',
+        ]);
+
+        $reference = $transfer->reference_code ?? $transfer->id;
+        $notificationData = [
+            'transfer_id' => $transfer->id,
+            'beneficiary_id' => $transfer->beneficiary_id,
+            'status' => $transfer->status,
+            'reference_code' => $reference,
+        ];
+
+        Notification::create([
+            'id' => (string) Str::uuid(),
+            'user_id' => $transfer->user_id,
+            'type' => 'transfer_completed_sender',
+            'message' => 'Your transfer ' . $reference . ' has been completed.',
+            'data' => $notificationData,
+        ]);
+
+        $recipientUserId = optional($transfer->beneficiary)->recipient_user_id;
+        if ($recipientUserId) {
+            Notification::create([
+                'id' => (string) Str::uuid(),
+                'user_id' => $recipientUserId,
+                'type' => 'transfer_completed_recipient',
+                'message' => 'You received transfer ' . $reference . '.',
+                'data' => $notificationData,
+            ]);
+        }
     }
 }

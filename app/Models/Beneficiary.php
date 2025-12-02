@@ -7,6 +7,7 @@ class Beneficiary extends Model
 {
     protected $fillable = [
         'user_id',
+        'recipient_user_id',
         'full_name',
         'country',
         'city',
@@ -21,6 +22,11 @@ class Beneficiary extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function recipientUser()
+    {
+        return $this->belongsTo(User::class, 'recipient_user_id');
     }
 
     public function transfers()

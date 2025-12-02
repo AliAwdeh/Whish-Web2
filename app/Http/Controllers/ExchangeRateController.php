@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\ExchangeRate;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ExchangeRateController extends Controller
 {
@@ -20,14 +21,19 @@ class ExchangeRateController extends Controller
         }
 
         $data = $request->validate([
-            'from_currency_id' => 'required|exists:currencies,id',
+            'from_currency_id' => 'required|exists:currencies,id|different:to_currency_id',
             'to_currency_id' => 'required|exists:currencies,id',
-            'rate' => 'required|numeric',
+            'rate' => 'required|numeric|gt:0',
             'valid_from' => 'nullable|date',
             'valid_to' => 'nullable|date|after:valid_from',
         ]);
 
-        $rate = ExchangeRate::create($data);
+        $rate = DB::transaction(function () use ($data) {
+            $createdRate = ExchangeRate::create($data);
+            $this->syncInverseRate($createdRate);
+
+            return $createdRate;
+        });
 
         return response()->json($rate, 201);
     }
@@ -45,12 +51,13 @@ class ExchangeRateController extends Controller
         }
 
         $data = $request->validate([
-            'rate' => 'sometimes|required|numeric',
+            'rate' => 'sometimes|required|numeric|gt:0',
             'valid_from' => 'nullable|date',
             'valid_to' => 'nullable|date|after:valid_from',
         ]);
 
         $exchangeRate->update($data);
+        $this->syncInverseRate($exchangeRate->refresh());
 
         return response()->json($exchangeRate);
     }
@@ -65,5 +72,25 @@ class ExchangeRateController extends Controller
         $exchangeRate->delete();
 
         return response()->json(null, 204);
+    }
+
+    protected function syncInverseRate(ExchangeRate $rate): void
+    {
+        if ($rate->from_currency_id === $rate->to_currency_id || $rate->rate <= 0) {
+            return;
+        }
+
+        $inverseAttributes = [
+            'from_currency_id' => $rate->to_currency_id,
+            'to_currency_id' => $rate->from_currency_id,
+        ];
+
+        $inverseValues = [
+            'rate' => 1 / $rate->rate,
+            'valid_from' => $rate->valid_from,
+            'valid_to' => $rate->valid_to,
+        ];
+
+        ExchangeRate::updateOrCreate($inverseAttributes, $inverseValues);
     }
 }
