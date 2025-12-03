@@ -1,0 +1,1565 @@
+import React, { useEffect, useMemo, useState } from "react";
+import "./App.css";
+import { api, normalizeListResponse } from "./api/client";
+import { API_BASE_URL } from "./api/config";
+
+type AuthMode = "login" | "register";
+type PayoutMethod = "bank_deposit" | "cash_pickup" | "mobile_wallet";
+type TransferSpeed = "instant" | "same_day" | "standard";
+
+const defaultCurrencies = [
+  { id: 840, code: "USD", name: "US Dollar" },
+  { id: 978, code: "EUR", name: "Euro" },
+  { id: 826, code: "GBP", name: "British Pound" },
+  { id: 566, code: "NGN", name: "Nigerian Naira" },
+  { id: 356, code: "INR", name: "Indian Rupee" },
+];
+
+const defaultBeneficiaries = [
+  {
+    id: 101,
+    full_name: "Amina Diallo",
+    country: "SN",
+    payout_method: "mobile_wallet",
+    payout_details: { wallet: "Orange Money", number: "+221 78 000 0000" },
+  },
+  {
+    id: 102,
+    full_name: "Carlos Vega",
+    country: "MX",
+    payout_method: "cash_pickup",
+    payout_details: { branch: "CDMX Centro", code: "MX-PICK-21" },
+  },
+];
+
+const defaultPaymentMethods = [
+  {
+    id: 201,
+    type: "bank_account",
+    provider_name: "Chase",
+    currency: "USD",
+    masked_number: "•••2345",
+    is_verified: true,
+  },
+  {
+    id: 202,
+    type: "wallet",
+    provider_name: "Payoneer",
+    currency: "EUR",
+    masked_number: "•••8899",
+    is_verified: false,
+  },
+];
+
+const defaultOffers = [
+  {
+    id: 301,
+    title: "Welcome 20% off fees",
+    discount_percent: 20,
+    is_active: true,
+    ends_at: "Rolling promo",
+  },
+];
+
+const sampleAgents = [
+  {
+    id: 401,
+    store_name: "SwiftPay - Nairobi CBD",
+    city: "Nairobi",
+    country: "KE",
+    lat: -1.286389,
+    long: 36.817223,
+    status: "approved",
+    working_hours: "08:00 - 21:00",
+  },
+  {
+    id: 402,
+    store_name: "Mercurio - Mexico City",
+    city: "Mexico City",
+    country: "MX",
+    lat: 19.432608,
+    long: -99.133209,
+    status: "approved",
+    working_hours: "09:00 - 19:00",
+  },
+  {
+    id: 403,
+    store_name: "Northbridge Partners - London",
+    city: "London",
+    country: "UK",
+    lat: 51.507351,
+    long: -0.127758,
+    status: "pending",
+    working_hours: "24/7 pickup",
+  },
+];
+
+const sampleNotifications = [
+  { id: 1, title: "Transfer completed", detail: "TX-2041 paid out in Nairobi", read: false },
+  { id: 2, title: "New dispute", detail: "Refund review started for TX-1988", read: false },
+  { id: 3, title: "Agent approval", detail: "Mercurio - Mexico City moved to approved", read: true },
+];
+
+const payoutOptions: PayoutMethod[] = ["bank_deposit", "cash_pickup", "mobile_wallet"];
+const speedOptions: TransferSpeed[] = ["instant", "same_day", "standard"];
+const roleOptions = [
+  { value: "user", label: "Regular user" },
+  { value: "agent", label: "Agent / Partner store" },
+  { value: "admin", label: "Admin (platform)" },
+];
+
+function formatCurrency(code: string, value: number) {
+  const numericValue = Number(value ?? 0);
+  return `${code} ${numericValue.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function parseError(err: any) {
+  if (!err) return "Unexpected error";
+  if (err?.message) return err.message;
+  if (err?.errors && typeof err.errors === "object") {
+    const firstKey = Object.keys(err.errors)[0];
+    if (firstKey && Array.isArray(err.errors[firstKey])) return err.errors[firstKey][0];
+  }
+  if (err?.status) return `Request failed (${err.status})`;
+  return "Something went wrong";
+}
+
+export default function App() {
+  const [user, setUser] = useState<any>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [authForm, setAuthForm] = useState({
+    name: "Jane Partner",
+    email: "jane.agent@example.com",
+    password: "secret123",
+    role: "user",
+  });
+
+  const [status, setStatus] = useState<Record<string, string>>({});
+  const [toast, setToast] = useState<string | null>(null);
+  const [toastTone, setToastTone] = useState<"positive" | "negative">("positive");
+
+  const [currencies, setCurrencies] = useState(defaultCurrencies);
+  const [beneficiaries, setBeneficiaries] = useState(defaultBeneficiaries);
+  const [paymentMethods, setPaymentMethods] = useState(defaultPaymentMethods);
+  const [offers, setOffers] = useState(defaultOffers);
+  const [notifications, setNotifications] = useState(sampleNotifications);
+  const [transferOptions, setTransferOptions] = useState<any>(null);
+  const [adminSummary, setAdminSummary] = useState<any>(null);
+  const [transfers, setTransfers] = useState<any[]>([]);
+
+  const [transferSearch, setTransferSearch] = useState({
+    from_currency_id: defaultCurrencies[0].id,
+    to_currency_id: defaultCurrencies[1].id,
+    amount_from: 500,
+    payout_method: "bank_deposit" as PayoutMethod,
+    speed: "instant" as TransferSpeed,
+  });
+
+  const [newTransfer, setNewTransfer] = useState({
+    beneficiary_id: defaultBeneficiaries[0]?.id ?? "",
+    payment_method_id: defaultPaymentMethods[0]?.id ?? "",
+    agent_id: sampleAgents[0]?.id ?? "",
+    offer_id: defaultOffers[0]?.id ?? "",
+    from_currency_id: defaultCurrencies[0].id,
+    to_currency_id: defaultCurrencies[1].id,
+    amount_from: 500,
+    amount_to: 0,
+    fee_amount: 0,
+    exchange_rate_used: 1,
+    speed: "instant" as TransferSpeed,
+    payout_method: "bank_deposit" as PayoutMethod,
+  });
+
+  const [newBeneficiary, setNewBeneficiary] = useState({
+    full_name: "New Recipient",
+    country: "KE",
+    city: "Nairobi",
+    payout_method: "bank_deposit" as PayoutMethod,
+    payout_details: '{"iban": "KE12 1234 1234", "bank": "Equity"}',
+  });
+
+  const [newPaymentMethod, setNewPaymentMethod] = useState({
+    type: "bank_account",
+    provider_name: "Bank of Example",
+    currency: defaultCurrencies[0].code,
+    masked_number: "•••1122",
+    details: '{"account": "123-456", "routing": "110000"}',
+  });
+
+  const [newCurrency, setNewCurrency] = useState({ code: "CAD", name: "Canadian Dollar", is_active: true });
+  const [newExchangeRate, setNewExchangeRate] = useState({
+    from_currency_id: defaultCurrencies[0].id,
+    to_currency_id: defaultCurrencies[1].id,
+    rate: 1.08,
+    valid_from: "",
+    valid_to: "",
+  });
+  const [newFee, setNewFee] = useState({
+    from_currency_id: defaultCurrencies[0].id,
+    to_currency_id: defaultCurrencies[1].id,
+    payout_method: "bank_deposit" as PayoutMethod,
+    base_fee: 2.25,
+    percent_fee: 1.7,
+    is_active: true,
+  });
+  const [newOffer, setNewOffer] = useState({
+    title: "Holiday bonus",
+    description: "Lower fees for family payouts",
+    discount_percent: 15,
+    starts_at: "",
+    ends_at: "",
+    is_active: true,
+  });
+  const [newAgent, setNewAgent] = useState({
+    store_name: "Neighborhood Agent",
+    address: "2nd Avenue",
+    city: "Kampala",
+    country: "UG",
+    lat: "0.3476",
+    long: "32.5825",
+    working_hours: "09:00 - 18:00",
+  });
+
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      bootstrapFromApi();
+    }
+  }, []);
+
+  useEffect(() => {
+    const rate = transferOptions?.rate ?? 1;
+    const computedAmountTo = Math.max(1, Number(transferSearch.amount_from || 0) * Number(rate));
+    const computedFee =
+      transferOptions?.fee?.total ??
+      ((Number(transferSearch.amount_from || 0) * (newFee.percent_fee / 100)) + newFee.base_fee);
+
+    setNewTransfer((prev) => ({
+      ...prev,
+      from_currency_id: transferSearch.from_currency_id,
+      to_currency_id: transferSearch.to_currency_id,
+      amount_from: transferSearch.amount_from,
+      amount_to: Number(computedAmountTo.toFixed(2)),
+      payout_method: transferSearch.payout_method,
+      speed: transferSearch.speed,
+      fee_amount: Number(computedFee.toFixed(2)),
+      exchange_rate_used: Number(rate.toFixed(4)),
+    }));
+  }, [transferSearch, transferOptions, newFee.percent_fee, newFee.base_fee]);
+
+  const quotePreview = useMemo(() => {
+    const rate = transferOptions?.rate ?? 1.07;
+    const fee =
+      transferOptions?.fee?.total ??
+      Number(
+        (newFee.base_fee + transferSearch.amount_from * (newFee.percent_fee / 100)).toFixed(2)
+      );
+    return {
+      rate,
+      fee,
+      total: Number((transferSearch.amount_from + fee).toFixed(2)),
+      receiveAmount: Number((transferSearch.amount_from * rate - fee).toFixed(2)),
+    };
+  }, [transferOptions, newFee.base_fee, newFee.percent_fee, transferSearch.amount_from]);
+
+  function setMessage(message: string, tone: "positive" | "negative" = "positive") {
+    setToast(message);
+    setToastTone(tone);
+    setTimeout(() => setToast(null), 4000);
+  }
+
+  async function bootstrapFromApi() {
+    setStatus((s) => ({ ...s, bootstrap: "loading" }));
+    try {
+      const me = await api.me();
+      setUser(me);
+
+      const [currRes, benRes, pmRes, offerRes, summaryRes, transferRes, notifRes] = await Promise.allSettled([
+        api.listCurrencies(),
+        api.listBeneficiaries(),
+        api.listPaymentMethods(),
+        api.listOffers(),
+        api.adminSummary(),
+        api.listTransfers(),
+        api.listNotifications(),
+      ]);
+
+      if (currRes.status === "fulfilled") setCurrencies(normalizeListResponse(currRes.value));
+      if (benRes.status === "fulfilled") setBeneficiaries(normalizeListResponse(benRes.value));
+      if (pmRes.status === "fulfilled") setPaymentMethods(normalizeListResponse(pmRes.value));
+      if (offerRes.status === "fulfilled") setOffers(normalizeListResponse(offerRes.value));
+      if (summaryRes.status === "fulfilled") setAdminSummary(summaryRes.value);
+      if (transferRes.status === "fulfilled") setTransfers(normalizeListResponse(transferRes.value));
+      if (notifRes.status === "fulfilled") setNotifications(normalizeListResponse(notifRes.value));
+
+      setMessage("Synced with backend API");
+    } catch (err) {
+      setMessage(`API sync failed: ${parseError(err)}`, "negative");
+    } finally {
+      setStatus((s) => ({ ...s, bootstrap: "idle" }));
+    }
+  }
+
+  async function handleAuthSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, auth: "loading" }));
+    try {
+      const payload = { ...authForm };
+      const res =
+        authMode === "login"
+          ? await api.login({ email: payload.email, password: payload.password })
+          : await api.register(payload);
+
+      const token =
+        res?.token ||
+        res?.access_token ||
+        res?.data?.token ||
+        res?.data?.access_token ||
+        res?.authorisation?.token;
+      if (token) {
+        localStorage.setItem("token", token);
+      }
+      setMessage(authMode === "login" ? "Logged in" : "Account created");
+      await bootstrapFromApi();
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, auth: "idle" }));
+    }
+  }
+
+  function handleLogout() {
+    localStorage.removeItem("token");
+    setUser(null);
+    setMessage("Logged out");
+  }
+
+  async function handleTransferSearch(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, quote: "loading" }));
+    try {
+      const result = localStorage.getItem("token")
+        ? await api.getTransferOptions({
+            from_currency_id: transferSearch.from_currency_id,
+            to_currency_id: transferSearch.to_currency_id,
+            amount_from: transferSearch.amount_from,
+            payout_method: transferSearch.payout_method,
+          })
+        : {
+            rate: 1.07,
+            fee: {
+              base: newFee.base_fee,
+              percent: newFee.percent_fee,
+              total: newFee.base_fee + transferSearch.amount_from * (newFee.percent_fee / 100),
+            },
+            total_to_pay:
+              transferSearch.amount_from +
+              (newFee.base_fee + transferSearch.amount_from * (newFee.percent_fee / 100)),
+            currencies: currencies,
+          };
+
+      setTransferOptions({
+        rate: Number(result.rate),
+        fee: {
+          ...result.fee,
+          total: Number(result.fee?.total ?? 0),
+        },
+        total_to_pay: Number(result.total_to_pay ?? 0),
+      });
+      setMessage("Transfer options refreshed");
+    } catch (err) {
+      setTransferOptions(null);
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, quote: "idle" }));
+    }
+  }
+
+  async function handleCreateBeneficiary(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, beneficiary: "loading" }));
+    try {
+      const payload = {
+        ...newBeneficiary,
+        payout_details: parseJsonIfPossible(newBeneficiary.payout_details),
+      };
+      let created = payload;
+      if (localStorage.getItem("token")) {
+        created = await api.createBeneficiary(payload);
+      } else {
+        created = { ...payload, id: Date.now() };
+      }
+      setBeneficiaries((prev) => [created, ...prev]);
+      setNewBeneficiary((prev) => ({ ...prev, full_name: "", country: "", city: "", payout_details: "{}" }));
+      setMessage("Beneficiary saved");
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, beneficiary: "idle" }));
+    }
+  }
+
+  async function handleCreatePaymentMethod(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, payment: "loading" }));
+    try {
+      const payload = {
+        ...newPaymentMethod,
+        details: parseJsonIfPossible(newPaymentMethod.details),
+      };
+      let created = payload;
+      if (localStorage.getItem("token")) {
+        created = await api.createPaymentMethod(payload);
+      } else {
+        created = { ...payload, id: Date.now(), is_verified: true };
+      }
+      setPaymentMethods((prev) => [created, ...prev]);
+      setNewPaymentMethod((prev) => ({
+        ...prev,
+        provider_name: "",
+        masked_number: "",
+        details: "{}",
+      }));
+      setMessage("Payment method added");
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, payment: "idle" }));
+    }
+  }
+
+  async function handleCreateTransfer(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, transfer: "loading" }));
+    try {
+      const payload = {
+        ...newTransfer,
+        amount_from: Number(newTransfer.amount_from),
+        amount_to: Number(newTransfer.amount_to),
+        fee_amount: Number(newTransfer.fee_amount),
+        exchange_rate_used: Number(newTransfer.exchange_rate_used),
+        metadata: {
+          quote_source: transferOptions ? "api" : "offline",
+          initiated_from: "React portal",
+        },
+      };
+      let created = payload;
+      if (localStorage.getItem("token")) {
+        created = await api.createTransfer(payload);
+      } else {
+        created = { ...payload, id: Date.now(), status: "pending" };
+      }
+      setTransfers((prev) => [created, ...prev]);
+      setMessage("Transfer initiated");
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, transfer: "idle" }));
+    }
+  }
+
+  async function handleCreateCurrency(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, currency: "loading" }));
+    try {
+      let created = { ...newCurrency };
+      if (localStorage.getItem("token")) {
+        created = await api.createCurrency(newCurrency);
+      } else {
+        created = { ...newCurrency, id: Date.now() };
+      }
+      setCurrencies((prev) => [created, ...prev]);
+      setMessage("Currency saved");
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, currency: "idle" }));
+    }
+  }
+
+  async function handleCreateExchangeRate(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, rate: "loading" }));
+    try {
+      let created = { ...newExchangeRate };
+      if (localStorage.getItem("token")) {
+        created = await api.createExchangeRate(newExchangeRate);
+      } else {
+        created = { ...newExchangeRate, id: Date.now() };
+      }
+      setMessage("Exchange rate recorded");
+      setTransferSearch((prev) => ({
+        ...prev,
+        from_currency_id: created.from_currency_id,
+        to_currency_id: created.to_currency_id,
+      }));
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, rate: "idle" }));
+    }
+  }
+
+  async function handleCreateFee(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, fee: "loading" }));
+    try {
+      if (localStorage.getItem("token")) {
+        await api.createFeeStructure(newFee);
+      }
+      setMessage("Fee structure saved");
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, fee: "idle" }));
+    }
+  }
+
+  async function handleCreateOffer(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, offer: "loading" }));
+    try {
+      let created = { ...newOffer };
+      if (localStorage.getItem("token")) {
+        created = await api.createOffer(newOffer);
+      } else {
+        created = { ...newOffer, id: Date.now() };
+      }
+      setOffers((prev) => [created, ...prev]);
+      setMessage("Offer saved");
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, offer: "idle" }));
+    }
+  }
+
+  async function handleAgentRegistration(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus((s) => ({ ...s, agent: "loading" }));
+    try {
+      let created = { ...newAgent };
+      if (localStorage.getItem("token")) {
+        created = await api.createAgent({
+          ...newAgent,
+          lat: Number(newAgent.lat),
+          long: Number(newAgent.long),
+        });
+      } else {
+        created = { ...newAgent, id: Date.now(), status: "pending" };
+      }
+      setMessage("Agent submitted for approval");
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, agent: "idle" }));
+    }
+  }
+
+  return (
+    <div className="page">
+      <div className="page-surface" />
+      <header className="topbar">
+        <div>
+          <div className="pill">Whish Money Transfer Portal</div>
+          <h1>
+            Fast, compliant, multi-role portal for <span className="accent">cross-border</span> payouts.
+          </h1>
+          <p className="lede">
+            Orchestrate users, agents, and admins with the Laravel API below. Calculate quotes, onboard partners,
+            and launch transfers without leaving this page.
+          </p>
+          <div className="cta-row">
+            <a className="btn primary" href="#transfers">
+              Launch a transfer
+            </a>
+            <a className="btn ghost" href="#admin">
+              Configure fees & FX
+            </a>
+            <div className="pill subtle">API Base: {API_BASE_URL}</div>
+          </div>
+          <div className="stats">
+            <div className="stat">
+              <div className="stat-value">24/7</div>
+              <div className="stat-label">Instant payouts & same-day options</div>
+            </div>
+            <div className="stat">
+              <div className="stat-value">{currencies.length}</div>
+              <div className="stat-label">Supported currencies live in config</div>
+            </div>
+            <div className="stat">
+              <div className="stat-value">{beneficiaries.length}</div>
+              <div className="stat-label">Beneficiaries ready to receive</div>
+            </div>
+            <div className="stat">
+              <div className="stat-value">3</div>
+              <div className="stat-label">Role-ready: Admin, User, Agent</div>
+            </div>
+          </div>
+        </div>
+        <div className="hero-panel">
+          <div className="panel-title">What you can do</div>
+          <ul className="checklist">
+            <li>Register/login (user/agent/admin) with JWT</li>
+            <li>Add payout beneficiaries & payment methods</li>
+            <li>Search transfer routes, fees, FX, offers</li>
+            <li>Initiate, cancel, dispute or refund transfers</li>
+            <li>Approve agents, manage commissions & reports</li>
+            <li>Trigger notifications and capture reviews</li>
+          </ul>
+          <div className="badge-row">
+            <span className="pill good">Secure JWT</span>
+            <span className="pill good">Role aware</span>
+            <span className="pill subtle">Map for agents</span>
+            <span className="pill good">Real-time status logs</span>
+          </div>
+        </div>
+      </header>
+
+      {toast && (
+        <div className={`toast ${toastTone === "positive" ? "toast-good" : "toast-bad"}`}>
+          {toast}
+        </div>
+      )}
+
+      <main className="grid">
+        <section className="panel wide" id="auth">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Authentication</p>
+              <h2>Login or create an account</h2>
+              <p className="muted">
+                Register as a user, agent, or admin. Tokens are stored locally so subsequent requests include
+                `Authorization: Bearer`.
+              </p>
+            </div>
+            <div className="badge-row">
+              <span className="pill good">JWT</span>
+              <span className="pill subtle">Role based</span>
+            </div>
+          </div>
+          <div className="panel-body two-col">
+            <form className="form" onSubmit={handleAuthSubmit}>
+              <div className="tab-row">
+                {(["login", "register"] as AuthMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`tab ${authMode === mode ? "active" : ""}`}
+                    onClick={() => setAuthMode(mode)}
+                  >
+                    {mode === "login" ? "Login" : "Create account"}
+                  </button>
+                ))}
+              </div>
+              {authMode === "register" && (
+                <label className="field">
+                  <span>Name</span>
+                  <input
+                    value={authForm.name}
+                    onChange={(e) => setAuthForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="Full name"
+                    required
+                  />
+                </label>
+              )}
+              <label className="field">
+                <span>Email</span>
+                <input
+                  type="email"
+                  value={authForm.email}
+                  onChange={(e) => setAuthForm((p) => ({ ...p, email: e.target.value }))}
+                  required
+                  placeholder="you@example.com"
+                />
+              </label>
+              <label className="field">
+                <span>Password</span>
+                <input
+                  type="password"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm((p) => ({ ...p, password: e.target.value }))}
+                  required
+                  minLength={6}
+                />
+              </label>
+              {authMode === "register" && (
+                <label className="field">
+                  <span>Role</span>
+                  <select
+                    value={authForm.role}
+                    onChange={(e) => setAuthForm((p) => ({ ...p, role: e.target.value }))}
+                  >
+                    {roleOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button className="btn primary" type="submit" disabled={status.auth === "loading"}>
+                {status.auth === "loading" ? "Working..." : authMode === "login" ? "Login" : "Register"}
+              </button>
+              {user && (
+                <div className="inline-row">
+                  <div className="pill good">Logged in as {user.email || user.name || "user"}</div>
+                  <button className="btn ghost" type="button" onClick={handleLogout}>
+                    Logout
+                  </button>
+                </div>
+              )}
+            </form>
+            <div className="card-stack">
+              <div className="card">
+                <p className="eyebrow">Platform snapshot</p>
+                <h3>Roles & guardrails</h3>
+                <ul className="checklist compact">
+                  <li>Admin: approve agents, manage FX/fees/offers, run reports</li>
+                  <li>Agent: cash-in/out, commissions, location & hours on map</li>
+                  <li>User: send/receive, manage beneficiaries & funding methods</li>
+                </ul>
+              </div>
+              <div className="card">
+                <p className="eyebrow">Notifications</p>
+                <div className="notification-list">
+                  {notifications.map((note) => (
+                    <div key={note.id} className={`notification ${note.read ? "read" : ""}`}>
+                      <div className="pill subtle">#{note.id}</div>
+                      <div>
+                        <div className="notif-title">{note.title}</div>
+                        <div className="muted">{note.detail}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel" id="search">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Transfer options</p>
+              <h2>Search routes, fees, FX, offers</h2>
+            </div>
+            <span className="pill subtle">{offers.length} active offers</span>
+          </div>
+          <form className="form" onSubmit={handleTransferSearch}>
+            <div className="form-grid">
+              <label className="field">
+                <span>From currency</span>
+                <select
+                  value={transferSearch.from_currency_id}
+                  onChange={(e) =>
+                    setTransferSearch((p) => ({ ...p, from_currency_id: Number(e.target.value) }))
+                  }
+                >
+                  {currencies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} · {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>To currency</span>
+                <select
+                  value={transferSearch.to_currency_id}
+                  onChange={(e) =>
+                    setTransferSearch((p) => ({ ...p, to_currency_id: Number(e.target.value) }))
+                  }
+                >
+                  {currencies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} · {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Send amount</span>
+                <input
+                  type="number"
+                  value={transferSearch.amount_from}
+                  onChange={(e) =>
+                    setTransferSearch((p) => ({ ...p, amount_from: Number(e.target.value) }))
+                  }
+                  min={1}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Payout method</span>
+                <select
+                  value={transferSearch.payout_method}
+                  onChange={(e) =>
+                    setTransferSearch((p) => ({ ...p, payout_method: e.target.value as PayoutMethod }))
+                  }
+                >
+                  {payoutOptions.map((o) => (
+                    <option key={o} value={o}>
+                      {o.replace("_", " ")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Speed</span>
+                <select
+                  value={transferSearch.speed}
+                  onChange={(e) =>
+                    setTransferSearch((p) => ({ ...p, speed: e.target.value as TransferSpeed }))
+                  }
+                >
+                  {speedOptions.map((o) => (
+                    <option key={o} value={o}>
+                      {o.replace("_", " ")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <button className="btn primary" type="submit" disabled={status.quote === "loading"}>
+              {status.quote === "loading" ? "Calculating..." : "Get options"}
+            </button>
+          </form>
+          <div className="quote">
+            <div>
+              <p className="muted">Live preview</p>
+              <h3>{formatCurrency("FROM", transferSearch.amount_from)}</h3>
+              <p className="muted">Send amount</p>
+            </div>
+            <div>
+              <p className="muted">Rate</p>
+              <h3>{quotePreview.rate.toFixed(4)}</h3>
+              <p className="muted">Exchange rate used</p>
+            </div>
+            <div>
+              <p className="muted">Fees</p>
+              <h3>{formatCurrency(currencies.find((c) => c.id === transferSearch.from_currency_id)?.code || "FX", quotePreview.fee)}</h3>
+              <p className="muted">Base + % fee (promo applied if eligible)</p>
+            </div>
+            <div>
+              <p className="muted">Recipient gets</p>
+              <h3>{formatCurrency("TO", quotePreview.receiveAmount)}</h3>
+              <p className="muted">After fees</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel" id="wallet">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Funding & payout</p>
+              <h2>Payment methods & beneficiaries</h2>
+            </div>
+            <div className="pill subtle">{beneficiaries.length} recipients</div>
+          </div>
+          <div className="panel-body two-col">
+            <form className="form" onSubmit={handleCreatePaymentMethod}>
+              <p className="eyebrow">Payment method</p>
+              <label className="field">
+                <span>Type</span>
+                <select
+                  value={newPaymentMethod.type}
+                  onChange={(e) => setNewPaymentMethod((p) => ({ ...p, type: e.target.value }))}
+                >
+                  <option value="bank_account">Bank account</option>
+                  <option value="card">Card</option>
+                  <option value="wallet">Wallet</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Provider</span>
+                <input
+                  value={newPaymentMethod.provider_name}
+                  onChange={(e) => setNewPaymentMethod((p) => ({ ...p, provider_name: e.target.value }))}
+                  placeholder="Bank / issuer"
+                />
+              </label>
+              <label className="field">
+                <span>Currency</span>
+                <select
+                  value={newPaymentMethod.currency}
+                  onChange={(e) => setNewPaymentMethod((p) => ({ ...p, currency: e.target.value }))}
+                >
+                  {currencies.map((c) => (
+                    <option key={c.id} value={c.code}>
+                      {c.code}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Masked number</span>
+                <input
+                  value={newPaymentMethod.masked_number}
+                  onChange={(e) => setNewPaymentMethod((p) => ({ ...p, masked_number: e.target.value }))}
+                  placeholder="•••2345"
+                />
+              </label>
+              <label className="field">
+                <span>Details (JSON)</span>
+                <textarea
+                  value={newPaymentMethod.details}
+                  onChange={(e) => setNewPaymentMethod((p) => ({ ...p, details: e.target.value }))}
+                  rows={3}
+                />
+              </label>
+              <button className="btn primary" type="submit" disabled={status.payment === "loading"}>
+                {status.payment === "loading" ? "Saving..." : "Save payment method"}
+              </button>
+            </form>
+
+            <form className="form" onSubmit={handleCreateBeneficiary}>
+              <p className="eyebrow">Beneficiary</p>
+              <label className="field">
+                <span>Full name</span>
+                <input
+                  value={newBeneficiary.full_name}
+                  onChange={(e) => setNewBeneficiary((p) => ({ ...p, full_name: e.target.value }))}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Country</span>
+                <input
+                  value={newBeneficiary.country}
+                  onChange={(e) => setNewBeneficiary((p) => ({ ...p, country: e.target.value }))}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>City</span>
+                <input
+                  value={newBeneficiary.city}
+                  onChange={(e) => setNewBeneficiary((p) => ({ ...p, city: e.target.value }))}
+                />
+              </label>
+              <label className="field">
+                <span>Payout method</span>
+                <select
+                  value={newBeneficiary.payout_method}
+                  onChange={(e) =>
+                    setNewBeneficiary((p) => ({ ...p, payout_method: e.target.value as PayoutMethod }))
+                  }
+                >
+                  {payoutOptions.map((o) => (
+                    <option key={o} value={o}>
+                      {o.replace("_", " ")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Payout details (JSON)</span>
+                <textarea
+                  value={newBeneficiary.payout_details}
+                  onChange={(e) => setNewBeneficiary((p) => ({ ...p, payout_details: e.target.value }))}
+                  rows={3}
+                />
+              </label>
+              <button className="btn primary" type="submit" disabled={status.beneficiary === "loading"}>
+                {status.beneficiary === "loading" ? "Saving..." : "Save beneficiary"}
+              </button>
+            </form>
+          </div>
+          <div className="chip-row">
+            {beneficiaries.slice(0, 4).map((b) => (
+              <div key={b.id} className="chip">
+                <div className="pill subtle">#{b.id}</div>
+                <div>
+                  <div className="chip-title">{b.full_name}</div>
+                  <div className="muted">
+                    {b.country} · {b.payout_method.replace("_", " ")}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {paymentMethods.slice(0, 3).map((p) => (
+              <div key={p.id} className="chip">
+                <div className="pill subtle">{p.type}</div>
+                <div>
+                  <div className="chip-title">{p.provider_name}</div>
+                  <div className="muted">
+                    {p.currency} · {p.masked_number} {p.is_verified ? "· verified" : "· pending"}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel" id="transfers">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Transfers</p>
+              <h2>Initiate and track</h2>
+            </div>
+            <div className="pill subtle">{transfers.length} created</div>
+          </div>
+          <form className="form" onSubmit={handleCreateTransfer}>
+            <div className="form-grid">
+              <label className="field">
+                <span>Beneficiary</span>
+                <select
+                  value={newTransfer.beneficiary_id}
+                  onChange={(e) =>
+                    setNewTransfer((p) => ({ ...p, beneficiary_id: Number(e.target.value) }))
+                  }
+                >
+                  {beneficiaries.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.full_name} · {b.country}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Payment method</span>
+                <select
+                  value={newTransfer.payment_method_id}
+                  onChange={(e) =>
+                    setNewTransfer((p) => ({ ...p, payment_method_id: Number(e.target.value) }))
+                  }
+                >
+                  {paymentMethods.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.provider_name} ({p.type})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Agent (optional)</span>
+                <select
+                  value={newTransfer.agent_id}
+                  onChange={(e) => setNewTransfer((p) => ({ ...p, agent_id: Number(e.target.value) }))}
+                >
+                  {sampleAgents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.store_name} · {a.city}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Offer (optional)</span>
+                <select
+                  value={newTransfer.offer_id}
+                  onChange={(e) => setNewTransfer((p) => ({ ...p, offer_id: Number(e.target.value) }))}
+                >
+                  <option value="">No offer</option>
+                  {offers.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Send amount</span>
+                <input
+                  type="number"
+                  value={newTransfer.amount_from}
+                  onChange={(e) => setNewTransfer((p) => ({ ...p, amount_from: Number(e.target.value) }))}
+                  min={1}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Receive amount</span>
+                <input
+                  type="number"
+                  value={newTransfer.amount_to}
+                  onChange={(e) => setNewTransfer((p) => ({ ...p, amount_to: Number(e.target.value) }))}
+                  min={1}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Fee amount</span>
+                <input
+                  type="number"
+                  value={newTransfer.fee_amount}
+                  onChange={(e) => setNewTransfer((p) => ({ ...p, fee_amount: Number(e.target.value) }))}
+                  min={0}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Exchange rate used</span>
+                <input
+                  type="number"
+                  value={newTransfer.exchange_rate_used}
+                  onChange={(e) =>
+                    setNewTransfer((p) => ({ ...p, exchange_rate_used: Number(e.target.value) }))
+                  }
+                  step="0.0001"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Speed</span>
+                <select
+                  value={newTransfer.speed}
+                  onChange={(e) => setNewTransfer((p) => ({ ...p, speed: e.target.value as TransferSpeed }))}
+                >
+                  {speedOptions.map((o) => (
+                    <option key={o} value={o}>
+                      {o.replace("_", " ")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Payout method</span>
+                <select
+                  value={newTransfer.payout_method}
+                  onChange={(e) =>
+                    setNewTransfer((p) => ({ ...p, payout_method: e.target.value as PayoutMethod }))
+                  }
+                >
+                  {payoutOptions.map((o) => (
+                    <option key={o} value={o}>
+                      {o.replace("_", " ")}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <button className="btn primary" type="submit" disabled={status.transfer === "loading"}>
+              {status.transfer === "loading" ? "Creating..." : "Create transfer"}
+            </button>
+          </form>
+          <div className="transfer-list">
+            {transfers.slice(0, 4).map((t) => (
+              <div key={t.id} className="transfer-card">
+                <div className="pill subtle">#{t.id ?? "pending"}</div>
+                <div className="transfer-main">
+                  <div>
+                    <div className="chip-title">
+                      {formatCurrency(
+                        currencies.find((c) => c.id === t.from_currency_id)?.code || "FROM",
+                        t.amount_from
+                      )}{" "}
+                      →{" "}
+                      {formatCurrency(
+                        currencies.find((c) => c.id === t.to_currency_id)?.code || "TO",
+                        t.amount_to
+                      )}
+                    </div>
+                    <div className="muted">
+                      {t.speed} · {t.payout_method.replace("_", " ")} · fee {formatCurrency("FX", t.fee_amount)}
+                    </div>
+                  </div>
+                  <div className="pill good">{t.status || "pending"}</div>
+                </div>
+              </div>
+            ))}
+            {transfers.length === 0 && <p className="muted">Transfers will appear here after you submit.</p>}
+          </div>
+        </section>
+
+        <section className="panel" id="admin">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Admin controls</p>
+              <h2>Currencies, FX, fee structures & offers</h2>
+            </div>
+            <div className="pill subtle">Admin-only endpoints</div>
+          </div>
+          <div className="panel-body two-col">
+            <form className="form" onSubmit={handleCreateCurrency}>
+              <p className="eyebrow">Currency</p>
+              <label className="field">
+                <span>Code</span>
+                <input
+                  value={newCurrency.code}
+                  onChange={(e) => setNewCurrency((p) => ({ ...p, code: e.target.value.toUpperCase() }))}
+                  maxLength={3}
+                />
+              </label>
+              <label className="field">
+                <span>Name</span>
+                <input value={newCurrency.name} onChange={(e) => setNewCurrency((p) => ({ ...p, name: e.target.value }))} />
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={newCurrency.is_active}
+                  onChange={(e) => setNewCurrency((p) => ({ ...p, is_active: e.target.checked }))}
+                />
+                <span>Is active</span>
+              </label>
+              <button className="btn primary" type="submit" disabled={status.currency === "loading"}>
+                Save currency
+              </button>
+            </form>
+
+            <form className="form" onSubmit={handleCreateExchangeRate}>
+              <p className="eyebrow">Exchange rate</p>
+              <div className="form-grid">
+                <label className="field">
+                  <span>From</span>
+                  <select
+                    value={newExchangeRate.from_currency_id}
+                    onChange={(e) =>
+                      setNewExchangeRate((p) => ({ ...p, from_currency_id: Number(e.target.value) }))
+                    }
+                  >
+                    {currencies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>To</span>
+                  <select
+                    value={newExchangeRate.to_currency_id}
+                    onChange={(e) =>
+                      setNewExchangeRate((p) => ({ ...p, to_currency_id: Number(e.target.value) }))
+                    }
+                  >
+                    {currencies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Rate</span>
+                  <input
+                    type="number"
+                    value={newExchangeRate.rate}
+                    step="0.0001"
+                    onChange={(e) => setNewExchangeRate((p) => ({ ...p, rate: Number(e.target.value) }))}
+                  />
+                </label>
+                <label className="field">
+                  <span>Valid from</span>
+                  <input
+                    type="date"
+                    value={newExchangeRate.valid_from}
+                    onChange={(e) => setNewExchangeRate((p) => ({ ...p, valid_from: e.target.value }))}
+                  />
+                </label>
+                <label className="field">
+                  <span>Valid to</span>
+                  <input
+                    type="date"
+                    value={newExchangeRate.valid_to}
+                    onChange={(e) => setNewExchangeRate((p) => ({ ...p, valid_to: e.target.value }))}
+                  />
+                </label>
+              </div>
+              <button className="btn primary" type="submit" disabled={status.rate === "loading"}>
+                Save exchange rate
+              </button>
+            </form>
+          </div>
+          <div className="panel-body two-col">
+            <form className="form" onSubmit={handleCreateFee}>
+              <p className="eyebrow">Fee structure</p>
+              <div className="form-grid">
+                <label className="field">
+                  <span>From currency</span>
+                  <select
+                    value={newFee.from_currency_id}
+                    onChange={(e) => setNewFee((p) => ({ ...p, from_currency_id: Number(e.target.value) }))}
+                  >
+                    {currencies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>To currency</span>
+                  <select
+                    value={newFee.to_currency_id}
+                    onChange={(e) => setNewFee((p) => ({ ...p, to_currency_id: Number(e.target.value) }))}
+                  >
+                    {currencies.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Payout method</span>
+                  <select
+                    value={newFee.payout_method}
+                    onChange={(e) => setNewFee((p) => ({ ...p, payout_method: e.target.value as PayoutMethod }))}
+                  >
+                    {payoutOptions.map((o) => (
+                      <option key={o} value={o}>
+                        {o.replace("_", " ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Base fee</span>
+                  <input
+                    type="number"
+                    value={newFee.base_fee}
+                    onChange={(e) => setNewFee((p) => ({ ...p, base_fee: Number(e.target.value) }))}
+                    min={0}
+                  />
+                </label>
+                <label className="field">
+                  <span>Percent fee</span>
+                  <input
+                    type="number"
+                    value={newFee.percent_fee}
+                    onChange={(e) => setNewFee((p) => ({ ...p, percent_fee: Number(e.target.value) }))}
+                    min={0}
+                  />
+                </label>
+              </div>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={newFee.is_active}
+                  onChange={(e) => setNewFee((p) => ({ ...p, is_active: e.target.checked }))}
+                />
+                <span>Is active</span>
+              </label>
+              <button className="btn primary" type="submit" disabled={status.fee === "loading"}>
+                Save fee structure
+              </button>
+            </form>
+
+            <form className="form" onSubmit={handleCreateOffer}>
+              <p className="eyebrow">Offer</p>
+              <label className="field">
+                <span>Title</span>
+                <input value={newOffer.title} onChange={(e) => setNewOffer((p) => ({ ...p, title: e.target.value }))} />
+              </label>
+              <label className="field">
+                <span>Description</span>
+                <textarea
+                  rows={3}
+                  value={newOffer.description}
+                  onChange={(e) => setNewOffer((p) => ({ ...p, description: e.target.value }))}
+                />
+              </label>
+              <label className="field">
+                <span>Discount percent</span>
+                <input
+                  type="number"
+                  value={newOffer.discount_percent}
+                  onChange={(e) => setNewOffer((p) => ({ ...p, discount_percent: Number(e.target.value) }))}
+                  min={0}
+                />
+              </label>
+              <label className="field">
+                <span>Starts at</span>
+                <input
+                  type="date"
+                  value={newOffer.starts_at}
+                  onChange={(e) => setNewOffer((p) => ({ ...p, starts_at: e.target.value }))}
+                />
+              </label>
+              <label className="field">
+                <span>Ends at</span>
+                <input
+                  type="date"
+                  value={newOffer.ends_at}
+                  onChange={(e) => setNewOffer((p) => ({ ...p, ends_at: e.target.value }))}
+                />
+              </label>
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={newOffer.is_active}
+                  onChange={(e) => setNewOffer((p) => ({ ...p, is_active: e.target.checked }))}
+                />
+                <span>Is active</span>
+              </label>
+              <button className="btn primary" type="submit" disabled={status.offer === "loading"}>
+                Save offer
+              </button>
+            </form>
+          </div>
+          <div className="chip-row">
+            {currencies.slice(0, 6).map((c) => (
+              <div key={c.id} className="chip">
+                <div className="pill subtle">#{c.id}</div>
+                <div>
+                  <div className="chip-title">{c.code}</div>
+                  <div className="muted">{c.name}</div>
+                </div>
+              </div>
+            ))}
+            {offers.slice(0, 3).map((o) => (
+              <div key={o.id} className="chip">
+                <div className="pill good">{o.discount_percent}%</div>
+                <div>
+                  <div className="chip-title">{o.title}</div>
+                  <div className="muted">{o.description || "Offer active"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel" id="agents">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Agents & partners</p>
+              <h2>Register, track cash-in/out, map coverage</h2>
+            </div>
+            <div className="pill subtle">{sampleAgents.length} agent locations</div>
+          </div>
+          <div className="panel-body two-col">
+            <form className="form" onSubmit={handleAgentRegistration}>
+              <p className="eyebrow">Register agent</p>
+              <label className="field">
+                <span>Store name</span>
+                <input
+                  value={newAgent.store_name}
+                  onChange={(e) => setNewAgent((p) => ({ ...p, store_name: e.target.value }))}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Address</span>
+                <input value={newAgent.address} onChange={(e) => setNewAgent((p) => ({ ...p, address: e.target.value }))} />
+              </label>
+              <label className="field">
+                <span>City</span>
+                <input value={newAgent.city} onChange={(e) => setNewAgent((p) => ({ ...p, city: e.target.value }))} />
+              </label>
+              <label className="field">
+                <span>Country</span>
+                <input value={newAgent.country} onChange={(e) => setNewAgent((p) => ({ ...p, country: e.target.value }))} />
+              </label>
+              <div className="form-grid">
+                <label className="field">
+                  <span>Latitude</span>
+                  <input
+                    value={newAgent.lat}
+                    onChange={(e) => setNewAgent((p) => ({ ...p, lat: e.target.value }))}
+                    required
+                  />
+                </label>
+                <label className="field">
+                  <span>Longitude</span>
+                  <input
+                    value={newAgent.long}
+                    onChange={(e) => setNewAgent((p) => ({ ...p, long: e.target.value }))}
+                    required
+                  />
+                </label>
+              </div>
+              <label className="field">
+                <span>Working hours</span>
+                <input
+                  value={newAgent.working_hours}
+                  onChange={(e) => setNewAgent((p) => ({ ...p, working_hours: e.target.value }))}
+                />
+              </label>
+              <button className="btn primary" type="submit" disabled={status.agent === "loading"}>
+                Submit agent
+              </button>
+            </form>
+
+            <div className="map">
+              <div className="map-header">
+                <div>
+                  <p className="eyebrow">Coverage map</p>
+                  <h3>Agents with geolocation</h3>
+                  <p className="muted">Data stored as lat/long; render on any map library.</p>
+                </div>
+                <div className="pill subtle">Lat/Long ready</div>
+              </div>
+              <div className="map-grid">
+                {sampleAgents.map((agent) => (
+                  <div key={agent.id} className="map-card">
+                    <div className="chip-title">{agent.store_name}</div>
+                    <div className="muted">
+                      {agent.city}, {agent.country}
+                    </div>
+                    <div className="muted">
+                      {agent.lat}, {agent.long}
+                    </div>
+                    <div className={`pill ${agent.status === "approved" ? "good" : "subtle"}`}>
+                      {agent.status}
+                    </div>
+                    <div className="muted">{agent.working_hours}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel" id="reports">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Reporting & compliance</p>
+              <h2>Platform summary</h2>
+            </div>
+            <div className="pill subtle">Endpoint: /admin/reports/summary</div>
+          </div>
+          <div className="summary-grid">
+            <div className="summary-card">
+              <p className="muted">Total transfers</p>
+              <h3>{adminSummary?.transfers || transfers.length || 0}</h3>
+            </div>
+            <div className="summary-card">
+              <p className="muted">Users</p>
+              <h3>{adminSummary?.users || (user ? 1 : 0)}</h3>
+            </div>
+            <div className="summary-card">
+              <p className="muted">Agents</p>
+              <h3>{adminSummary?.agents || sampleAgents.length}</h3>
+            </div>
+            <div className="summary-card">
+              <p className="muted">Disputes</p>
+              <h3>{adminSummary?.disputes || 0}</h3>
+            </div>
+          </div>
+          <div className="chip-row">
+            <div className="chip">
+              <div className="pill subtle">Fraud</div>
+              <div className="chip-title">Dispute & refund flow</div>
+              <div className="muted">Open → in_review → resolved/rejected</div>
+            </div>
+            <div className="chip">
+              <div className="pill subtle">Support</div>
+              <div className="chip-title">Chatbot-ready</div>
+              <div className="muted">Connect to the support endpoint or embed widget</div>
+            </div>
+            <div className="chip">
+              <div className="pill subtle">Notifications</div>
+              <div className="chip-title">Email / SMS / in-app</div>
+              <div className="muted">Use NotificationController to mark read</div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+function parseJsonIfPossible(value: string) {
+  if (!value) return {};
+  try {
+    return JSON.parse(value);
+  } catch (err) {
+    return value;
+  }
+}
