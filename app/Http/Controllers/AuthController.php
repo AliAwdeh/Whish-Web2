@@ -189,6 +189,8 @@ class AuthController extends Controller
                 'password' => bcrypt(Str::random(32)),
                 'role' => 'user',
             ]);
+        } elseif (! $user->role) {
+            $user->forceFill(['role' => 'user'])->save();
         }
 
         $token = JWTAuth::fromUser($user);
@@ -197,6 +199,31 @@ class AuthController extends Controller
             'access_token' => $token,
             'token_type' => 'bearer',
             'user' => $user,
+        ]);
+    }
+
+    public function githubExchange(Request $request)
+    {
+        $data = $request->validate([
+            'code' => 'required|string',
+            'redirect_uri' => 'nullable|string',
+        ]);
+
+        $response = Http::asForm()
+            ->acceptJson()
+            ->post('https://github.com/login/oauth/access_token', [
+                'client_id' => config('services.github.client_id'),
+                'client_secret' => config('services.github.client_secret'),
+                'code' => $data['code'],
+                'redirect_uri' => $data['redirect_uri'] ?? config('services.github.redirect'),
+            ]);
+
+        if (! $response->ok() || empty($response['access_token'])) {
+            return response()->json(['message' => 'GitHub code exchange failed'], 401);
+        }
+
+        return response()->json([
+            'access_token' => $response['access_token'],
         ]);
     }
 }

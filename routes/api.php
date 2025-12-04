@@ -26,6 +26,7 @@ Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login',    [AuthController::class, 'login']);
 Route::post('/auth/google', [AuthController::class, 'googleLogin']);
 Route::post('/auth/github', [AuthController::class, 'githubLogin']);
+Route::post('/auth/github/exchange', [AuthController::class, 'githubExchange']);
 
 //protected routes
 
