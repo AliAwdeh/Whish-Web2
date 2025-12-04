@@ -459,10 +459,6 @@ h1 {
   z-index: 30;
 }
 
-.map-picker-backdrop.hidden {
-  display: none;
-}
-
 .map-picker-modal {
   width: min(960px, 100%);
   background: rgba(8, 12, 24, 0.95);

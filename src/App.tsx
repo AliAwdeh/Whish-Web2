@@ -742,14 +742,21 @@ export default function App() {
       setMessage("Please select working hours", "negative");
       return;
     }
+    const latNum = Number(newAgent.lat);
+    const lngNum = Number(newAgent.long);
+    if (Number.isNaN(latNum) || Number.isNaN(lngNum)) {
+      setMessage("Please set location from the map (latitude/longitude required)", "negative");
+      return;
+    }
     setStatus((s) => ({ ...s, agent: "loading" }));
     try {
       let created: any = { ...newAgent };
       if (localStorage.getItem("token")) {
         created = await api.createAgent({
           ...newAgent,
-          lat: Number(newAgent.lat),
-          long: Number(newAgent.long),
+          lat: latNum,
+          long: lngNum,
+          lng: lngNum,
           working_hours: [newAgent.working_from, newAgent.working_to],
         });
       } else {
@@ -760,7 +767,10 @@ export default function App() {
           status: "pending",
         };
       }
-      setAgents((prev) => [{ ...created, id: created.id ?? Date.now(), status: created.status ?? "pending" }, ...prev]);
+      setAgents((prev) => [
+        { ...created, id: created.id ?? Date.now(), status: created.status ?? "pending", lat: latNum, long: lngNum, lng: lngNum },
+        ...prev,
+      ]);
       setNewAgent(agentDefaults);
       setMessage("Agent submitted for approval");
     } catch (err) {

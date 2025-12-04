@@ -33,7 +33,8 @@ export function AgentLocatorPanel({ agents, collapsed, onToggle }: Props) {
           {agents.length === 0 && <div className="muted">No agents available yet.</div>}
           {agents.map((agent) => {
             const lat = typeof agent.lat === "string" ? Number(agent.lat) : agent.lat;
-            const lng = typeof agent.long === "string" ? Number(agent.long) : agent.long;
+            const lngRaw = agent.long ?? (typeof agent.lng === "string" ? Number(agent.lng) : agent.lng);
+            const lng = typeof lngRaw === "string" ? Number(lngRaw) : lngRaw;
             const hasLocation = typeof lat === "number" && !Number.isNaN(lat) && typeof lng === "number" && !Number.isNaN(lng);
             const mapsUrl = hasLocation ? `https://www.google.com/maps?q=${lat},${lng}` : undefined;
             return (

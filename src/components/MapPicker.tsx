@@ -29,7 +29,7 @@ async function loadGoogleMaps(apiKey?: string) {
   }
 
   const script = document.createElement("script");
-  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
+  script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async`;
   script.async = true;
   script.defer = true;
   script.setAttribute("loading", "async");
@@ -72,16 +72,26 @@ export function MapPicker({ open, onClose, onSelect, initialLat = 31.963158, ini
           zoomControl: true,
         });
 
-        marker = new googleMaps.Marker({
-          position: { lat: initialLat, lng: initialLng },
-          map: mapInstance,
-          draggable: false,
-        });
+        const AdvancedMarker = googleMaps.marker?.AdvancedMarkerElement;
+        marker = AdvancedMarker
+          ? new AdvancedMarker({
+              position: { lat: initialLat, lng: initialLng },
+              map: mapInstance,
+            })
+          : new googleMaps.Marker({
+              position: { lat: initialLat, lng: initialLng },
+              map: mapInstance,
+              draggable: false,
+            });
 
         clickListener = mapInstance.addListener("click", (event: any) => {
           const lat = event.latLng.lat();
           const lng = event.latLng.lng();
-          if (marker) marker.setPosition({ lat, lng });
+          if (marker?.position) {
+            marker.position = { lat, lng };
+          } else if (marker?.setPosition) {
+            marker.setPosition({ lat, lng });
+          }
           onSelect(lat, lng);
           onClose();
         });
@@ -96,14 +106,18 @@ export function MapPicker({ open, onClose, onSelect, initialLat = 31.963158, ini
     return () => {
       if (clickListener?.remove) clickListener.remove();
       if (clickListener) window.google?.maps?.event?.removeListener(clickListener);
-      if (marker) marker.setMap(null);
+      if (mapInstance && window.google?.maps?.event?.clearInstanceListeners) {
+        window.google.maps.event.clearInstanceListeners(mapInstance);
+      }
+      if (marker?.setMap) marker.setMap(null);
       mapInstance = null;
-      if (mapRef.current) mapRef.current.innerHTML = "";
     };
   }, [open, initialLat, initialLng, onSelect, onClose]);
 
+  if (!open) return null;
+
   return (
-    <div className={`map-picker-backdrop ${open ? "open" : "hidden"}`} onClick={onClose}>
+    <div className="map-picker-backdrop" onClick={onClose}>
       <div className="map-picker-modal" onClick={(e) => e.stopPropagation()}>
         <div className="map-picker-header">
           <div>

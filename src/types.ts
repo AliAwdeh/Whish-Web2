@@ -39,6 +39,7 @@ export type Agent = {
   country?: string;
   lat?: number;
   long?: number;
+  lng?: number;
   status?: string;
   working_hours?: string | string[];
   address?: string;

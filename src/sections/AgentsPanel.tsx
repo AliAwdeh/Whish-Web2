@@ -150,9 +150,7 @@ export function AgentsPanel({
                   <div className="muted">
                     {agent.city}, {agent.country}
                   </div>
-                  <div className="muted">
-                    {agent.lat}, {agent.long}
-                  </div>
+                  <div className="muted">{agent.lat ?? "n/a"}, {agent.long ?? agent.lng ?? "n/a"}</div>
                   <div className={`pill ${agent.status === "approved" ? "good" : "subtle"}`}>{agent.status || "pending"}</div>
                   <div className="muted">
                     {Array.isArray(agent.working_hours)
