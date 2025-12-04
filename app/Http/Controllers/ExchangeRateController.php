@@ -29,10 +29,7 @@ class ExchangeRateController extends Controller
         ]);
 
         $rate = DB::transaction(function () use ($data) {
-            $createdRate = ExchangeRate::create($data);
-            $this->syncInverseRate($createdRate);
-
-            return $createdRate;
+            return ExchangeRate::create($data);
         });
 
         return response()->json($rate, 201);
@@ -57,9 +54,8 @@ class ExchangeRateController extends Controller
         ]);
 
         $exchangeRate->update($data);
-        $this->syncInverseRate($exchangeRate->refresh());
 
-        return response()->json($exchangeRate);
+        return response()->json($exchangeRate->refresh());
     }
 
     public function destroy(ExchangeRate $exchangeRate)
@@ -72,25 +68,5 @@ class ExchangeRateController extends Controller
         $exchangeRate->delete();
 
         return response()->json(null, 204);
-    }
-
-    protected function syncInverseRate(ExchangeRate $rate): void
-    {
-        if ($rate->from_currency_id === $rate->to_currency_id || $rate->rate <= 0) {
-            return;
-        }
-
-        $inverseAttributes = [
-            'from_currency_id' => $rate->to_currency_id,
-            'to_currency_id' => $rate->from_currency_id,
-        ];
-
-        $inverseValues = [
-            'rate' => 1 / $rate->rate,
-            'valid_from' => $rate->valid_from,
-            'valid_to' => $rate->valid_to,
-        ];
-
-        ExchangeRate::updateOrCreate($inverseAttributes, $inverseValues);
     }
 }

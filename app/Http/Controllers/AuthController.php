@@ -121,4 +121,82 @@ class AuthController extends Controller
             'user' => $user,
         ]);
     }
+
+    public function githubLogin(Request $request)
+    {
+        $data = $request->validate([
+            'access_token' => 'required|string',
+        ]);
+
+        $headers = [
+            'Authorization' => 'Bearer ' . $data['access_token'],
+            'Accept' => 'application/vnd.github+json',
+            'User-Agent' => config('app.name', 'Laravel'),
+        ];
+
+        $userResponse = Http::withHeaders($headers)->get('https://api.github.com/user');
+
+        if (! $userResponse->ok()) {
+            return response()->json(['message' => 'Invalid GitHub token'], 401);
+        }
+
+        $githubUser = $userResponse->json();
+
+        $email = $githubUser['email'] ?? null;
+
+        if (! $email) {
+            $emailResponse = Http::withHeaders($headers)->get('https://api.github.com/user/emails');
+
+            if ($emailResponse->ok() && is_array($emailResponse->json())) {
+                $emails = $emailResponse->json();
+                $primaryVerified = null;
+                $verified = null;
+                $first = null;
+
+                foreach ($emails as $emailEntry) {
+                    if (! is_array($emailEntry) || empty($emailEntry['email'])) {
+                        continue;
+                    }
+
+                    $first ??= $emailEntry['email'];
+
+                    if (($emailEntry['verified'] ?? false) && $verified === null) {
+                        $verified = $emailEntry['email'];
+                    }
+
+                    if (($emailEntry['primary'] ?? false) && ($emailEntry['verified'] ?? false)) {
+                        $primaryVerified = $emailEntry['email'];
+                        break;
+                    }
+                }
+
+                $email = $primaryVerified ?? $verified ?? $first;
+            }
+        }
+
+        if (! $email) {
+            return response()->json(['message' => 'GitHub account has no accessible email'], 400);
+        }
+
+        $name = $githubUser['name'] ?? $githubUser['login'] ?? Str::before($email, '@');
+
+        $user = User::where('email', $email)->first();
+
+        if (! $user) {
+            $user = User::create([
+                'name' => $name,
+                'email' => $email,
+                'password' => bcrypt(Str::random(32)),
+                'role' => 'user',
+            ]);
+        }
+
+        $token = JWTAuth::fromUser($user);
+
+        return response()->json([
+            'access_token' => $token,
+            'token_type' => 'bearer',
+            'user' => $user,
+        ]);
+    }
 }
