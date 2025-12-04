@@ -49,6 +49,9 @@ export const api = {
 
   register: (payload) => request("POST", "/auth/register", payload, false),
   login: (payload) => request("POST", "/auth/login", payload, false),
+  loginWithGoogle: (idToken) => request("POST", "/auth/google", { id_token: idToken }, false),
+  loginWithGithubCode: (code, redirect_uri) => request("POST", "/auth/github", { code, redirect_uri }, false),
+  loginWithGithubToken: (accessToken) => request("POST", "/auth/github", { access_token: accessToken }, false),
   logout: () => request("POST", "/auth/logout"),
   me: () => request("GET", "/auth/me"),
 
@@ -92,6 +95,7 @@ export const api = {
 
   listTransfers: () => request("GET", "/transfers"),
   createTransfer: (data) => request("POST", "/transfers", data),
+  approveTransfer: (id) => request("POST", `/transfers/${id}/approve`),
   cancelTransfer: (id) => request("POST", `/transfers/${id}/cancel`),
   refundTransfer: (id) => request("POST", `/transfers/${id}/refund`),
   disputeTransfer: (id, data) => request("POST", `/transfers/${id}/dispute`, data),

@@ -19,6 +19,8 @@ type Props = {
   setNewTransfer: Dispatch<SetStateAction<TransferFormState>>;
   onCreateTransfer: (e: FormEvent<HTMLFormElement>) => void;
   status: StatusMap;
+  onApproveTransfer?: (id: number) => void;
+  canApprove?: boolean;
   beneficiaries: Beneficiary[];
   paymentMethods: PaymentMethod[];
   offers: Offer[];
@@ -34,6 +36,8 @@ export function TransfersPanel({
   setNewTransfer,
   onCreateTransfer,
   status,
+  onApproveTransfer,
+  canApprove,
   beneficiaries,
   paymentMethods,
   offers,
@@ -134,7 +138,15 @@ export function TransfersPanel({
                   type="number"
                   value={newTransfer.fee_amount}
                   onChange={(e) => setNewTransfer((p) => ({ ...p, fee_amount: Number(e.target.value) }))}
+                  onBlur={(e) =>
+                    setNewTransfer((p) => ({
+                      ...p,
+                      fee_amount: Number(Number(e.target.value || 0).toFixed(2)),
+                    }))
+                  }
                   min={0}
+                  step="0.01"
+                  inputMode="decimal"
                   required
                 />
               </label>
@@ -177,23 +189,35 @@ export function TransfersPanel({
             </button>
           </form>
           <div className="transfer-list">
-            {transfers.slice(0, 4).map((t) => (
-              <div key={t.id ?? `${t.beneficiary_id}-${t.payment_method_id}-${t.amount_from}`} className="transfer-card">
-                <div className="pill subtle">#{t.id ?? "pending"}</div>
-                <div className="transfer-main">
-                  <div>
-                    <div className="chip-title">
-                      {formatCurrency(currencies.find((c) => c.id === t.from_currency_id)?.code || "FROM", t.amount_from)} →{" "}
-                      {formatCurrency(currencies.find((c) => c.id === t.to_currency_id)?.code || "TO", t.amount_to)}
+            {transfers.slice(0, 4).map((t) => {
+              const statusLabel = (t.status || "pending").toLowerCase();
+              const isPending = statusLabel === "pending";
+              const isApproving = t.id !== undefined && status.transferApprove === t.id.toString();
+              return (
+                <div key={t.id ?? `${t.beneficiary_id}-${t.payment_method_id}-${t.amount_from}`} className="transfer-card">
+                  <div className="pill subtle">#{t.id ?? "pending"}</div>
+                  <div className="transfer-main">
+                    <div>
+                      <div className="chip-title">
+                        {formatCurrency(currencies.find((c) => c.id === t.from_currency_id)?.code || "FROM", t.amount_from)} →{" "}
+                        {formatCurrency(currencies.find((c) => c.id === t.to_currency_id)?.code || "TO", t.amount_to)}
+                      </div>
+                      <div className="muted">
+                        {t.speed} / {t.payout_method.replace("_", " ")} / fee {formatCurrency("FX", t.fee_amount)}
+                      </div>
                     </div>
-                    <div className="muted">
-                      {t.speed} / {t.payout_method.replace("_", " ")} / fee {formatCurrency("FX", t.fee_amount)}
+                    <div className="inline-row">
+                      <div className={`pill ${isPending ? "subtle" : "good"}`}>{t.status || "pending"}</div>
+                      {canApprove && isPending && t.id && onApproveTransfer && (
+                        <button className="btn small" type="button" onClick={() => onApproveTransfer(t.id!)} disabled={isApproving}>
+                          {isApproving ? "Approving..." : "Approve"}
+                        </button>
+                      )}
                     </div>
                   </div>
-                  <div className="pill good">{t.status || "pending"}</div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {transfers.length === 0 && <p className="muted">Transfers will appear here after you submit.</p>}
           </div>
         </>

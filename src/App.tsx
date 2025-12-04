@@ -57,6 +57,9 @@ const authDefaults: AuthFormState = {
   password: "",
   role: "user",
 };
+const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined)?.trim();
+const githubClientId = (import.meta.env.VITE_GITHUB_CLIENT_ID as string | undefined)?.trim();
+const githubRedirectUri = (import.meta.env.VITE_GITHUB_REDIRECT_URI as string | undefined)?.split("#")[0].trim();
 
 const beneficiaryDefaults = (): BeneficiaryForm => ({
   full_name: "",
@@ -349,6 +352,24 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   }
 
+  function storeTokenFromResponse(res: any) {
+    const token =
+      res?.token ||
+      res?.access_token ||
+      res?.data?.token ||
+      res?.data?.access_token ||
+      res?.authorisation?.token;
+    const userPayload = res?.user || res?.data?.user;
+    if (token) {
+      localStorage.setItem("token", token);
+    }
+    if (userPayload) {
+      localStorage.setItem("user", JSON.stringify(userPayload));
+      setUser(userPayload);
+    }
+    return token;
+  }
+
   async function bootstrapFromApi() {
     setStatus((s) => ({ ...s, bootstrap: "loading" }));
     try {
@@ -391,15 +412,7 @@ export default function App() {
           ? await api.login({ email: payload.email, password: payload.password })
           : await api.register(payload);
 
-      const token =
-        res?.token ||
-        res?.access_token ||
-        res?.data?.token ||
-        res?.data?.access_token ||
-        res?.authorisation?.token;
-      if (token) {
-        localStorage.setItem("token", token);
-      }
+      storeTokenFromResponse(res);
       setAuthForm(authDefaults);
       setMessage(authMode === "login" ? "Logged in" : "Account created");
       await bootstrapFromApi();
@@ -412,6 +425,7 @@ export default function App() {
 
   function handleLogout() {
     localStorage.removeItem("token");
+    localStorage.removeItem("user");
     setUser(null);
     setCurrencies(defaultCurrencies);
     setBeneficiaries(defaultBeneficiaries);
@@ -436,6 +450,78 @@ export default function App() {
     setIsChatPage(false);
     setMessage("Logged out");
   }
+
+  async function handleGoogleCredential(idToken: string) {
+    setStatus((s) => ({ ...s, authGoogle: "loading" }));
+    try {
+      const res = await api.loginWithGoogle(idToken);
+      storeTokenFromResponse(res);
+      setMessage("Logged in with Google");
+      await bootstrapFromApi();
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, authGoogle: undefined }));
+    }
+  }
+
+  function handleGithubRedirect() {
+    if (!githubClientId || githubClientId.startsWith("your-")) {
+      setMessage("GitHub OAuth is not configured", "negative");
+      return;
+    }
+    if (!githubRedirectUri || !githubRedirectUri.startsWith("http")) {
+      setMessage("GitHub redirect URI is invalid", "negative");
+      return;
+    }
+    const params = new URLSearchParams({
+      client_id: githubClientId,
+      redirect_uri: githubRedirectUri,
+      scope: "read:user user:email",
+      state: "github_oauth",
+      allow_signup: "true",
+    });
+    window.location.href = `https://github.com/login/oauth/authorize?${params.toString()}`;
+  }
+
+  async function handleGithubCodeExchange(code?: string, url?: URL) {
+    setStatus((s) => ({ ...s, authGithub: "loading" }));
+    try {
+      const accessToken = url?.searchParams.get("access_token");
+      const res = accessToken
+        ? await api.loginWithGithubToken(accessToken)
+        : code
+        ? await api.loginWithGithubCode(code, githubRedirectUri)
+        : null;
+      if (!res) {
+        setMessage("GitHub OAuth response missing code/token", "negative");
+        return;
+      }
+      storeTokenFromResponse(res);
+      setMessage("Logged in with GitHub");
+      await bootstrapFromApi();
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      const params = url?.searchParams;
+      if (params) {
+        params.delete("code");
+        params.delete("state");
+        const newSearch = params.toString();
+        window.history.replaceState({}, "", `${url.pathname}${newSearch ? `?${newSearch}` : ""}${url.hash}`);
+      }
+      setStatus((s) => ({ ...s, authGithub: undefined }));
+    }
+  }
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (code && state === "github_oauth") {
+      handleGithubCodeExchange(code, url);
+    }
+  }, []);
 
   async function handleTransferSearch(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -587,7 +673,7 @@ export default function App() {
         ...newTransfer,
         amount_from: Number(newTransfer.amount_from),
         amount_to: Number(newTransfer.amount_to),
-        fee_amount: Number(newTransfer.fee_amount),
+        fee_amount: Number(Number(newTransfer.fee_amount).toFixed(2)),
         exchange_rate_used: Number(newTransfer.exchange_rate_used),
         metadata: {
           quote_source: transferOptions ? "api" : "offline",
@@ -614,6 +700,32 @@ export default function App() {
       setMessage(parseError(err), "negative");
     } finally {
       setStatus((s) => ({ ...s, transfer: undefined }));
+    }
+  }
+
+  async function handleApproveTransfer(id?: number) {
+    if (!canAdminFlows) {
+      setMessage("Only admins can approve transfers", "negative");
+      return;
+    }
+    if (!id) {
+      setMessage("Transfer ID missing", "negative");
+      return;
+    }
+    setStatus((s) => ({ ...s, transferApprove: id.toString() }));
+    try {
+      let updated: any = { status: "approved" };
+      if (localStorage.getItem("token")) {
+        updated = await api.approveTransfer(id);
+      }
+      setTransfers((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, ...updated, status: updated.status ?? "approved" } : t))
+      );
+      setMessage("Transfer approved");
+    } catch (err) {
+      setMessage(parseError(err), "negative");
+    } finally {
+      setStatus((s) => ({ ...s, transferApprove: undefined }));
     }
   }
 
@@ -904,6 +1016,12 @@ export default function App() {
             user={user}
             notifications={notifications}
             roleOptions={roleOptions}
+            onGoogleCredential={handleGoogleCredential}
+            onGoogleSetupMissing={() => setMessage("Set VITE_GOOGLE_CLIENT_ID to enable Google login", "negative")}
+            googleClientId={googleClientId}
+            onGithubRedirect={handleGithubRedirect}
+            githubClientId={githubClientId}
+            githubRedirectUri={githubRedirectUri}
           />
         </div>
       </div>
@@ -1003,6 +1121,8 @@ export default function App() {
                 transfers={transfers}
                 collapsed={!expandedPanels.transfers}
                 onToggle={() => togglePanel("transfers")}
+                onApproveTransfer={handleApproveTransfer}
+                canApprove={canAdminFlows}
               />
             ) : (
               <SectionNotice

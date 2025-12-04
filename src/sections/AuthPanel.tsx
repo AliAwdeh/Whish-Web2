@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, FormEvent, SetStateAction } from "react";
 import type { AuthFormState, AuthMode, NotificationItem, RoleOption, StatusMap, User } from "../types";
 
@@ -12,7 +13,19 @@ type Props = {
   user: User | null;
   notifications: NotificationItem[];
   roleOptions: RoleOption[];
+  onGoogleCredential?: (credential: string) => void;
+  onGoogleSetupMissing?: () => void;
+  googleClientId?: string;
+  onGithubRedirect?: () => void;
+  githubClientId?: string;
+  githubRedirectUri?: string;
 };
+
+declare global {
+  interface Window {
+    google?: any;
+  }
+}
 
 export function AuthPanel({
   authMode,
@@ -24,7 +37,69 @@ export function AuthPanel({
   status,
   user,
   roleOptions,
+  onGoogleCredential,
+  onGoogleSetupMissing,
+  googleClientId,
+  onGithubRedirect,
+  githubClientId,
+  githubRedirectUri,
 }: Props) {
+  const googleBtnRef = useRef<HTMLDivElement | null>(null);
+  const [googleError, setGoogleError] = useState<string | null>(null);
+
+  function mountGoogleButton() {
+    if (!googleClientId || !onGoogleCredential) return;
+    const googleId = window.google?.accounts?.id;
+    if (!googleId || !googleBtnRef.current || googleBtnRef.current.childElementCount > 0) return;
+    googleId.initialize({
+      client_id: googleClientId,
+      callback: (response: any) => {
+        if (response?.credential) {
+          onGoogleCredential(response.credential);
+        }
+      },
+    });
+    googleId.renderButton(googleBtnRef.current, { theme: "outline", size: "large", text: "continue_with" });
+  }
+
+  useEffect(() => {
+    if (!googleClientId || !onGoogleCredential) return;
+    let isCancelled = false;
+    const scriptSrc = "https://accounts.google.com/gsi/client";
+
+    const renderButton = () => {
+      if (isCancelled) return;
+      mountGoogleButton();
+    };
+
+    if (window.google?.accounts?.id) {
+      renderButton();
+      return;
+    }
+
+    const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${scriptSrc}"]`);
+    if (existingScript) {
+      existingScript.addEventListener("load", renderButton);
+      return () => {
+        isCancelled = true;
+        existingScript.removeEventListener("load", renderButton);
+      };
+    }
+
+    const script = document.createElement("script");
+    script.src = scriptSrc;
+    script.async = true;
+    script.defer = true;
+    script.onload = renderButton;
+    script.onerror = () => setGoogleError("Google login failed to load");
+    document.body.appendChild(script);
+
+    return () => {
+      isCancelled = true;
+      script.onload = null;
+    };
+  }, [googleClientId, onGoogleCredential]);
+
   return (
     <section className="panel wide" id="auth">
       <div className="panel-header">
@@ -119,6 +194,32 @@ export function AuthPanel({
               <li>Agent: cash-in/out, commissions, location & hours on map</li>
               <li>User: send/receive, manage beneficiaries & funding methods</li>
             </ul>
+          </div>
+          <div className="card">
+            <p className="eyebrow">Social login</p>
+            <h3>Login or sign up</h3>
+            <div>
+              {googleClientId && onGoogleCredential && !googleError ? (
+                <div ref={googleBtnRef} />
+              ) : (
+                <button className="btn ghost" type="button" onClick={onGoogleSetupMissing}>
+                  Enable Google login
+                </button>
+              )}
+              {!googleClientId && <p className="muted">Set VITE_GOOGLE_CLIENT_ID to enable Google login</p>}
+              {googleError && <p className="muted">{googleError}</p>}
+              <button
+                className="btn ghost"
+                type="button"
+                onClick={onGithubRedirect}
+                disabled={!onGithubRedirect || status.authGithub === "loading"}
+              >
+                {status.authGithub === "loading" ? "Connecting GitHub..." : "Continue with GitHub"}
+              </button>
+              {(!githubClientId || !githubRedirectUri) && (
+                <p className="muted">Set VITE_GITHUB_CLIENT_ID and VITE_GITHUB_REDIRECT_URI to enable GitHub login</p>
+              )}
+            </div>
           </div>
         </div>
       </div>
